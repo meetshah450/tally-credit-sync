@@ -10,6 +10,10 @@ const DATA_FILE = 'pending_updates.json';
 app.use(cors());
 app.use(bodyParser.json());
 
+app.get('/', (req, res) => {
+  res.send('Tally Credit Sync API Running!');
+});
+
 // Initialize JSON file if not present
 if (!fs.existsSync(DATA_FILE)) {
   fs.writeFileSync(DATA_FILE, JSON.stringify([]));

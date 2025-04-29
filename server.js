@@ -1,64 +1,58 @@
 ﻿const express = require('express');
-const bodyParser = require('body-parser');
 const cors = require('cors');
-const fs = require('fs');
+const bodyParser = require('body-parser');
 
 const app = express();
-const PORT = 9003; // You can change port if needed
-const DATA_FILE = 'pending_updates.json';
+const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(bodyParser.json());
 
+// In-memory queue (resets if server restarts)
+let updateQueue = [];
+
+// Home route (optional)
 app.get('/', (req, res) => {
   res.send('Tally Credit Sync API Running!');
 });
 
-// Initialize JSON file if not present
-if (!fs.existsSync(DATA_FILE)) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify([]));
-}
-
-// Endpoint to receive credit limit update from Google Sheet
+// Add a new update from AppSheet/Google Sheets
 app.post('/addUpdate', (req, res) => {
   const { ledgerName, creditLimit } = req.body;
 
   if (!ledgerName || !creditLimit) {
-    return res.status(400).send({ message: 'Missing ledgerName or creditLimit' });
+    return res.status(400).json({ message: "Missing ledgerName or creditLimit" });
   }
 
-  const currentUpdates = JSON.parse(fs.readFileSync(DATA_FILE));
-  currentUpdates.push({ ledgerName, creditLimit, status: 'pending' });
-  fs.writeFileSync(DATA_FILE, JSON.stringify(currentUpdates, null, 2));
+  // Avoid duplicates
+  const exists = updateQueue.some(item => item.ledgerName === ledgerName);
+  if (!exists) {
+    updateQueue.push({ ledgerName, creditLimit });
+    console.log(`✅ Received update: ${ledgerName} -> ${creditLimit}`);
+  }
 
-  console.log(`Received update: ${ledgerName} -> ${creditLimit}`);
-  res.send({ message: 'Update stored successfully' });
+  res.json({ message: "Update stored successfully" });
 });
 
-// Endpoint for agent to pull pending updates
-app.get('/pendingUpdates', (req, res) => {
-  const currentUpdates = JSON.parse(fs.readFileSync(DATA_FILE));
-  const pending = currentUpdates.filter(update => update.status === 'pending');
-  res.send(pending);
+// Fetch current update queue (used by sync.js)
+app.get('/getQueue', (req, res) => {
+  res.json(updateQueue);
 });
 
-// Endpoint to mark update as completed after agent updates Tally
-app.post('/markCompleted', (req, res) => {
+// Remove a ledger from queue after successful sync
+app.post('/clearLedger', (req, res) => {
   const { ledgerName } = req.body;
-  const currentUpdates = JSON.parse(fs.readFileSync(DATA_FILE));
 
-  const index = currentUpdates.findIndex(u => u.ledgerName === ledgerName && u.status === 'pending');
-  if (index >= 0) {
-    currentUpdates[index].status = 'completed';
-    fs.writeFileSync(DATA_FILE, JSON.stringify(currentUpdates, null, 2));
-    console.log(`Marked ${ledgerName} as completed.`);
-    res.send({ message: 'Update marked as completed' });
-  } else {
-    res.status(404).send({ message: 'Ledger not found or already completed' });
+  if (!ledgerName) {
+    return res.status(400).json({ message: "Missing ledgerName" });
   }
+
+  updateQueue = updateQueue.filter(item => item.ledgerName !== ledgerName);
+  console.log(`🧹 Cleared ledger: ${ledgerName}`);
+  res.json({ message: "Ledger cleared from queue" });
 });
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
 });
